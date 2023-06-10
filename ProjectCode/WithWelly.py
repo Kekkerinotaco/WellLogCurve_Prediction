@@ -1,50 +1,65 @@
+import os
 from tensorflow import keras
 import pickle
 import sklearn
 import welly
 import pandas as pd
-# import lasio
 from welly import Curve
 
-transformer_path = r"path_to_transformer"
 
-with open(transformer_path, "rb") as file:
-    transformer = pickle.load(file)
+def main():
+    """Starts program execution"""
+    transformer_path = r""
+    model_path = r""
+    folder_with_files = r""
+    transformer = load_model(transformer_path)
+    model = load_model(model_path)
+    process_las_files(folder_with_files, transformer, model)
+    print("Successfully completed")
 
-model_path = r"path_to_model"
-with open(model_path, "rb") as file:
-    model = pickle.load(file)
 
-las_file_path = r"path_to_a_las_file"
+def load_model(model_path):
+    """The function loads the model located at model_path"""
+    with open(model_path, "rb") as file:
+        model = pickle.load(file)
+    return model
 
-project = welly.read_las(las_file_path)
-well = project[0]
 
-gr_curve = well.data["GK"].df
-bk_curve = well.data["BK"].df
+def process_las_files(folder_with_files, transformer, model):
+    """Function processes .las files located in folder_with_files
+       uses pretrained transformer and model, for making result files"""
+    result_folder_path = os.path.join(folder_with_files, "!_ResultFiles")
+    manage_folder_existence(result_folder_path)
+    for root, folders, files in os.walk(folder_with_files):
+        for file in files:
+            if file.upper().endswith(".LAS"):
+                file_path = os.path.join(root, file)
+                processed_file = process_file(file_path, transformer, model)
+                processed_file.to_las(os.path.join(result_folder_path, file))
 
-print(gr_curve)
 
-print(bk_curve)
-data_for_prediction = pd.concat([gr_curve, bk_curve], axis=1)
+def manage_folder_existence(folder_path):
+    """Created a folder, if it doesn't exist already"""
+    try:
+        os.mkdir(folder_path)
+    except FileExistsError:
+        pass
 
-print(data_for_prediction)
 
-X_transformed = transformer.transform(data_for_prediction)
+def process_file(file_path, transformer, model):
+    """Based on .las file located in file_path, creates result .las file, containing predicted curve data"""
+    project = welly.read_las(file_path)
+    well = project[0]
+    gr_curve = well.data["GK"].df
+    bk_curve = well.data["BK"].df
+    data_for_prediction = pd.concat([gr_curve, bk_curve], axis=1)
+    X_transformed = transformer.transform(data_for_prediction)
+    NKTD_curve = model.predict(X_transformed)
+    params = {"mnemonic": "NKTD_predicted"}
+    c = Curve(NKTD_curve, index=well.data["GK"].df.index, **params)
+    well.data["NKTD_pred"] = c
+    return well
 
-print(X_transformed)
 
-NKTD_curve = model.predict(X_transformed)
-
-params = {"mnemonic": "NKTD_predicted"}
-
-c = Curve(NKTD_curve, index=well.data["GK"].df.index, **params)
-
-print(c)
-
-well.data["NKTD_pred"] = c
-
-print(well.data)
-
-out_path = r"../../02.OtherNKTDProject/Processed.las"
-well.to_las(out_path)
+if __name__ == "__main__":
+    main()
