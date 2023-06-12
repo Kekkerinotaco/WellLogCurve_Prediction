@@ -17,63 +17,68 @@ from sklearn.model_selection import RandomizedSearchCV
 from xgboost import XGBRegressor
 import matplotlib.pyplot as plt
 
-
-
-def main():
-    folder_with_files = r""
-    needed_columns = ["GK", "BK", "NKTD"]
-    # learning_data = get_data(folder_with_files, needed_columns)
-    csv_path = os.path.join(folder_with_files, "!_LearningData.csv")
-    # learning_data.to_csv(csv_path)
+date_time_str = time.strftime("run_%Y_%m_%d-%H_%M_%S")
+def main(folder_with_files, needed_columns, target_column):
+    # folder_with_files = r""
+    # needed_columns = ["GK", "BK", "NKTD"]
+    # csv_path = os.path.join(folder_with_files, "!_LearningData.csv")
     start = time.time()
-    learning_data = pd.read_csv(csv_path)
-    learning_data.index = learning_data["DEPT"]
-    learning_data.drop(columns="DEPT", inplace=True)
+    # learning_data = pd.read_csv(csv_path, index_col=0)
+    learning_data = get_learning_data_from_lases(folder_with_files, needed_columns)
+    print(learning_data)
+
+    # Возможно весь этот блок бесполезен, или нужен только при загрузке датасета из .csv, но и там похоже решается
+    # указанием колонки-индекса
+    try:
+        learning_data.index = learning_data["DEPT"]
+        learning_data.drop(columns="DEPT", inplace=True)
+    except KeyError:
+        try:
+            learning_data.index = learning_data["DEPTH"]
+            learning_data.drop(columns="DEPTH", inplace=True)
+        except:
+            pass
+
     learning_data = preprocess_data(learning_data)
-    learning_data = learning_data.head(50000)
-    target_column = "NKTD"
+    learning_data = learning_data.head(150000)
+    X_train, X_test, y_train, y_test, full_pipeline = transform_data(learning_data, target_column=target_column,
+                                                                     add_log=True, add_exp=True, add_sqrt=True)
+
+    print(f"Data loading time: {time.time() - start}")
+    prediction_model = train_xgb_model(X_train, X_test, y_train, y_test)
+    return full_pipeline, prediction_model
+
+
+def transform_data(learning_data, target_column, add_log=True, add_exp=True, add_sqrt=True):
     X = learning_data.drop(columns=target_column)
     y = learning_data[target_column]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
     cat_attribs = []
-    num_initial_attribs = X_train.columns.drop(cat_attribs)
-    X_train, y_train = add_features(X_train, y_train, add_log=True, add_exp=True)
-    X_test, y_test = add_features(X_test, y_test, add_log=True, add_exp=True)
-
-
+    num_initial_attribs = X.columns.drop(cat_attribs)
+    X, y = add_features(X, y, add_log=True, add_exp=True, add_sqrt=True)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
     num_added_attribs = X_train.columns.drop(cat_attribs).drop(num_initial_attribs)
-
     num_initial_pipeline = Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
         ("poly_adder", PolynomialFeatures(degree=2)),
         ("std_scaler", StandardScaler())
     ])
-
     num_added_pipeline = Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
         ("std_scaler", StandardScaler())
     ])
-
     full_pipeline = ColumnTransformer([
         ("num_initial", num_initial_pipeline, num_initial_attribs),
         ("num_added", num_added_pipeline, num_added_attribs),
         ("cat", OneHotEncoder(), cat_attribs)
     ])
-
     X_train = full_pipeline.fit_transform(X_train)
     X_test = full_pipeline.transform(X_test)
+    save_model(full_pipeline, "Transformer.pkl")
 
-    transformer_filepath = r"/Users/gymoroz/Desktop/trans/pipeline.pkl"
-    with open(transformer_filepath, "wb") as file:
-        pickle.dump(full_pipeline, file)
-
-    print(learning_data.shape)
-    print(f"Data loading time: {time.time() - start}")
-
-    train_xgb_model(X_train, X_test, y_train, y_test)
+    return X_train, X_test, y_train, y_test, full_pipeline
 
 
-def get_data(folder_path, needed_curves):
+def get_learning_data_from_lases(folder_path, needed_curves):
     summary_data = None
     for root, folders, files in os.walk(folder_path):
         for file in files:
@@ -97,6 +102,7 @@ def get_las_data(las_file_path, needed_curves):
     except KeyError as e:
         print(f"Error {e} with file {os.path.basename(las_file_path)}")
 
+
 def preprocess_data(learning_data):
     learning_columns = ["GK", "BK"]
     # print(learning_data)
@@ -105,6 +111,7 @@ def preprocess_data(learning_data):
     # print(data_dropped_outliers)
     # print(data_dropped_outliers.shape)
     return data_dropped_outliers
+
 
 def drop_outliers(df, columns_to_clear, n_of_std_away):
     start_shape = df.shape
@@ -120,6 +127,7 @@ def drop_outliers(df, columns_to_clear, n_of_std_away):
                                                                                                         start_shape[0] - result_shape[0])
     print(result_string)
     return df
+
 
 def drop_corr(df, corr_coef):
     corr_matrix = df.corr().abs()
@@ -170,26 +178,61 @@ def train_xgb_model(X_train, X_test, y_train, y_test):
         linear_booster_params,
     ]
 
-    xgb_grid_search = RandomizedSearchCV(XGBRegressor(), xgb_grid_params, cv=5, scoring="r2", n_iter=20, n_jobs=-1)
+    xgb_grid_search = RandomizedSearchCV(XGBRegressor(), xgb_grid_params, cv=5, scoring="r2", n_iter=8, n_jobs=-1)
     print("Started to train XGBRegressor")
     xgb_grid_search.fit(X_train, y_train)
     xgb_reg = xgb_grid_search.best_estimator_
     y_hat = xgb_reg.predict(X_test)
     show_statistics(y_test, y_hat)
+    save_model(xgb_reg, "XGBRegressionModel.pkl")
     return xgb_reg
 
+
 def show_statistics(y_test, y_hat):
+    global date_time_str
+    folder_for_statistics = os.path.join(os.path.curdir, "01.PredictionQualityCheck")
+    ensure_folder_existance(folder_for_statistics)
+    folder_for_current_run_statistics = os.path.join(folder_for_statistics, date_time_str)
+    ensure_folder_existance(folder_for_current_run_statistics)
     median_test_value = y_test.median()
-    plt.scatter(y_test, y_hat)
-    plt.show()
+    fig = plt.scatter(y_test, y_hat)
+    fig_path = os.path.join(folder_for_current_run_statistics, "01.Pred_VS_True.jpg")
+    fig_copy = fig.get_figure()
+    fig_copy.savefig(fig_path, dpi=500)
+    plt.clf()
     print(r2_score(y_test, y_hat))
     errors = y_test - y_hat
     median_error = round(sum(errors) / len(errors), 5)
     plt.hist(errors, bins=150)
+    fig_path = os.path.join(folder_for_current_run_statistics, "02.ErrorsHist.jpg")
+    # fig_copy = fig.get_figure()
+    plt.savefig(fig_path, dpi=500)
     median_percent_error = round((median_error * 100 / median_test_value), 3)
-    print(f"Median NKTD value: {median_test_value}, meadian prediction error: "
-          f"{median_error} or {median_percent_error}%")
-    plt.show()
+    text_data_filepath = os.path.join(folder_for_current_run_statistics, "Stats.txt")
+    stat_string = f"Median NKTD value: {median_test_value}, \n meadian prediction error: {median_error} or {median_percent_error}%"
+    with open(text_data_filepath, "w") as file:
+        file.write(stat_string)
+
+
+def save_model(model, model_name):
+    global date_time_str
+    curr_folder_path = os.path.abspath(os.path.curdir)
+    models_folder = os.path.join(curr_folder_path, "Models")
+    current_run_folder = os.path.join(models_folder, date_time_str)
+    ensure_folder_existance(models_folder)
+    ensure_folder_existance(current_run_folder)
+    saved_model_path = os.path.join(current_run_folder, model_name)
+    with open(saved_model_path, "wb") as file:
+        pickle.dump(model, file)
+
+    print(models_folder)
+
+def ensure_folder_existance(folder_path):
+    try:
+        os.mkdir(folder_path)
+    except FileExistsError:
+        print(f"Folder already exists: \n {folder_path}")
+
 
 if __name__ == '__main__':
     main()

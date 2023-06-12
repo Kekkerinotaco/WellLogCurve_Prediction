@@ -1,25 +1,19 @@
 import os
-# from tensorflow import keras
 import pickle
 import sklearn
-from sklearn.preprocessing import PolynomialFeatures
-import welly
 import pandas as pd
-from welly import Curve
 import numpy as np
 import lasio
 
-print(sklearn.__version__)
 
-
-def main():
+def main(folder_with_files_path, transformer, model):
     """Starts program execution"""
-    transformer_path = r"/Users/gymoroz/01.MyFiles/02.Coding/01.CodeForO&G/05.NKTDPrediction/Models/ColumnTransformer.pkl"
-    model_path = r"/Users/gymoroz/01.MyFiles/02.Coding/01.CodeForO&G/05.NKTDPrediction/Models/xgb_reg.pkl"
-    folder_with_files = r"/Users/gymoroz/Desktop/ЛасФайлыДляТеста/РабочаяПапка"
-    transformer = load_model(transformer_path)
-    model = load_model(model_path)
-    process_las_files(folder_with_files, transformer, model)
+    # transformer_path = r"/Users/gymoroz/01.MyFiles/02.Coding/01.CodeForO&G/05.NKTDPrediction/ProjectCode/Models/run_2023_06_12-10_02_59/Transformer.pkl"
+    # model_path = r"/Users/gymoroz/01.MyFiles/02.Coding/01.CodeForO&G/05.NKTDPrediction/ProjectCode/Models/run_2023_06_12-10_02_59/XGBRegressionModel.pkl"
+    # folder_with_files_path = r"/Users/gymoroz/Desktop/Test1/ToPredict"
+    # transformer = load_model(transformer_path)
+    # model = load_model(model_path)
+    process_las_files(folder_with_files_path, transformer, model)
     print("Successfully completed")
 
 
@@ -50,6 +44,8 @@ def make_paths_list(folder_with_files):
                 file_path = os.path.join(root, file)
                 paths_list.append(file_path)
     return paths_list
+
+
 def manage_folder_existence(folder_path):
     """Created a folder, if it doesn't exist already"""
     try:
@@ -72,7 +68,8 @@ def process_file(file_path, transformer, model):
     depth_index = depth_data[~mask]
     initial_data_for_prediction = initial_data_for_prediction[~mask]
 
-    data_for_prediction = add_features(initial_data_for_prediction, add_log=True, add_exp=True, add_sqrt=True)
+    depth_index, initial_data_for_prediction, data_for_prediction = add_features(initial_data_for_prediction, depth_index, initial_data_for_prediction, add_log=True, add_exp=True, add_sqrt=True)
+    print(data_for_prediction)
     X_transformed = transformer.transform(data_for_prediction)
     NKTD_curve = model.predict(X_transformed)
     NKTD_curve = pd.DataFrame(NKTD_curve)
@@ -84,34 +81,65 @@ def process_file(file_path, transformer, model):
     las.set_data_from_df(resulting_data)
     return las
 
+
 def filter_data_for_prediction(well):
     gr_curve = well.data["GK"].df
     bk_curve = well.data["BK"].df
     data_for_prediction = pd.concat([gr_curve, bk_curve], axis=1)
     mask = data_for_prediction[~(data_for_prediction == -999.25).any(axis=1)]
 
-def add_features(X, add_log=True, add_exp=True, add_sqrt=True):
+
+def add_features(X, depth_index, initial_data_for_prediction, add_log=True, add_exp=True, add_sqrt=True):
     start_columns = X.columns
-    exp = np.exp(X)
+    # Надо переписать на формирование единой маски, ее возврат, и потом обрезку всех значений по ней, а не колхоз
+    # этот весь
     if add_log:
         log_X_data = np.log(X[start_columns])
         log_X_data.columns = [column_name + "_log" for column_name in X[start_columns]]
         X = pd.concat([X, log_X_data], axis=1)
-        X = X[X != np.NINF]
+        # drop_mask = X = np.NINF
+        mask = X.isin([np.Inf, np.NINF]).any(axis=1)
+        X = X[~mask]
+        depth_index = depth_index[~mask]
+        initial_data_for_prediction = initial_data_for_prediction[~mask]
+        # X = X[X != np.NINF]
+        # X = X[X != np.Inf]
+        # X.dropna(inplace=True, how='any')
     if add_exp:
         exp_X_data = np.exp(X[start_columns])
         exp_X_data.columns = [column_name + "_exp" for column_name in X[start_columns]]
         X = pd.concat([X, exp_X_data], axis=1)
-        X = X[X != np.NINF]
+        mask = X.isin([np.Inf, np.NINF]).any(axis=1)
+        X = X[~mask]
+        depth_index = depth_index[~mask]
+        initial_data_for_prediction = initial_data_for_prediction[~mask]
+        # print(X.max())
+        # X = X[X != np.NINF]
+        # X = X[X != np.Inf]
+        # X.dropna(inplace=True, how='any')
+
     if add_sqrt:
         sqrt_X_data = np.sqrt(X[start_columns])
         sqrt_X_data.columns = [column_name + "_sqrt" for column_name in X[start_columns]]
         X = pd.concat([X, sqrt_X_data], axis=1)
-        X = X[X != np.NINF]
+        mask = X.isin([np.Inf, np.NINF]).any(axis=1)
+
+        X = X[~mask]
+        depth_index = depth_index[~mask]
+        initial_data_for_prediction = initial_data_for_prediction[~mask]
+        # X = X[X != np.NINF]
+        # X = X[X != np.Inf]
+        # X.dropna(inplace=True, how='any')
+
     mask = X.isna().any(axis=1)
     X = X[~mask]
-    return X
+    depth_index = depth_index[~mask]
+    initial_data_for_prediction = initial_data_for_prediction[~mask]
+    return depth_index, initial_data_for_prediction, X
 
 
 if __name__ == "__main__":
-    main()
+    folder_with_files_path = None
+    transformer = None
+    model = None
+    main(folder_with_files_path, transformer, model)

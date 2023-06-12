@@ -1,0 +1,2 @@
+Median NKTD value: 4.8, 
+ meadian prediction error: -0.06231 or -1.298%
