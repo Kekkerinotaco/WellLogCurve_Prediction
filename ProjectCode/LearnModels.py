@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import time
 from sklearn.model_selection import train_test_split
-from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -12,10 +11,10 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 import pickle
-from sklearn.metrics import r2_score
 from sklearn.model_selection import RandomizedSearchCV
 from xgboost import XGBRegressor
-import matplotlib.pyplot as plt
+
+from ProjectCode import ShowStatistics
 
 date_time_str = time.strftime("run_%Y_%m_%d-%H_%M_%S")
 def main(folder_with_files, needed_columns, target_column):
@@ -25,7 +24,7 @@ def main(folder_with_files, needed_columns, target_column):
     start = time.time()
     # learning_data = pd.read_csv(csv_path, index_col=0)
     learning_data = get_learning_data_from_lases(folder_with_files, needed_columns)
-    print(learning_data)
+    # print(learning_data)
 
     # Возможно весь этот блок бесполезен, или нужен только при загрузке датасета из .csv, но и там похоже решается
     # указанием колонки-индекса
@@ -40,7 +39,7 @@ def main(folder_with_files, needed_columns, target_column):
             pass
 
     learning_data = preprocess_data(learning_data)
-    learning_data = learning_data.head(150000)
+    learning_data = learning_data.head(1000)
     X_train, X_test, y_train, y_test, full_pipeline = transform_data(learning_data, target_column=target_column,
                                                                      add_log=True, add_exp=True, add_sqrt=True)
 
@@ -98,6 +97,7 @@ def get_las_data(las_file_path, needed_curves):
     try:
         las_data = las.df()[needed_curves]
         las_data.dropna(inplace=True)
+        print(las_data)
         return las_data
     except KeyError as e:
         print(f"Error {e} with file {os.path.basename(las_file_path)}")
@@ -136,24 +136,31 @@ def drop_corr(df, corr_coef):
     df = df.drop(columns = to_drop)
     return df
 
+
 def add_features(X, y, add_log=True, add_exp=True, add_sqrt=True):
     start_columns = X.columns
     exp = np.exp(X)
+    # X.isin([np.Inf, np.NINF]).any(axis=1)
     if add_log:
         log_X_data = np.log(X[start_columns])
         log_X_data.columns = [column_name + "_log" for column_name in X[start_columns]]
         X = pd.concat([X, log_X_data], axis=1)
         X = X[X != np.NINF]
+        X = X[X != np.Inf]
     if add_exp:
         exp_X_data = np.exp(X[start_columns])
         exp_X_data.columns = [column_name + "_exp" for column_name in X[start_columns]]
         X = pd.concat([X, exp_X_data], axis=1)
         X = X[X != np.NINF]
+        X = X[X != np.Inf]
+
     if add_sqrt:
         sqrt_X_data = np.sqrt(X[start_columns])
         sqrt_X_data.columns = [column_name + "_sqrt" for column_name in X[start_columns]]
         X = pd.concat([X, sqrt_X_data], axis=1)
         X = X[X != np.NINF]
+        X = X[X != np.Inf]
+
     mask = X.isna().any(axis=1)
     X = X[~mask]
     y = y[~mask]
@@ -183,35 +190,40 @@ def train_xgb_model(X_train, X_test, y_train, y_test):
     xgb_grid_search.fit(X_train, y_train)
     xgb_reg = xgb_grid_search.best_estimator_
     y_hat = xgb_reg.predict(X_test)
-    show_statistics(y_test, y_hat)
+    ShowStatistics.main(y_test, y_hat, date_time_str)
+    # np.savetxt("./Yhat.csv", y_hat)
+    # y_hat.to_csv()
+    # y_test.iloc[:, 1].to_csv("./Ytest.csv")
     save_model(xgb_reg, "XGBRegressionModel.pkl")
     return xgb_reg
 
 
-def show_statistics(y_test, y_hat):
-    global date_time_str
-    folder_for_statistics = os.path.join(os.path.curdir, "01.PredictionQualityCheck")
-    ensure_folder_existance(folder_for_statistics)
-    folder_for_current_run_statistics = os.path.join(folder_for_statistics, date_time_str)
-    ensure_folder_existance(folder_for_current_run_statistics)
-    median_test_value = y_test.median()
-    fig = plt.scatter(y_test, y_hat)
-    fig_path = os.path.join(folder_for_current_run_statistics, "01.Pred_VS_True.jpg")
-    fig_copy = fig.get_figure()
-    fig_copy.savefig(fig_path, dpi=500)
-    plt.clf()
-    print(r2_score(y_test, y_hat))
-    errors = y_test - y_hat
-    median_error = round(sum(errors) / len(errors), 5)
-    plt.hist(errors, bins=150)
-    fig_path = os.path.join(folder_for_current_run_statistics, "02.ErrorsHist.jpg")
-    # fig_copy = fig.get_figure()
-    plt.savefig(fig_path, dpi=500)
-    median_percent_error = round((median_error * 100 / median_test_value), 3)
-    text_data_filepath = os.path.join(folder_for_current_run_statistics, "Stats.txt")
-    stat_string = f"Median NKTD value: {median_test_value}, \n meadian prediction error: {median_error} or {median_percent_error}%"
-    with open(text_data_filepath, "w") as file:
-        file.write(stat_string)
+# def show_statistics(y_test, y_hat):
+#     global date_time_str
+#     folder_for_statistics = os.path.join(os.path.curdir, "01.PredictionQualityCheck")
+#     ensure_folder_existance(folder_for_statistics)
+#     folder_for_current_run_statistics = os.path.join(folder_for_statistics, date_time_str)
+#     ensure_folder_existance(folder_for_current_run_statistics)
+#     median_test_value = y_test.median()
+#     fig = plt.scatter(y_test, y_hat)
+#     fig_path = os.path.join(folder_for_current_run_statistics, "01.Pred_VS_True.jpg")
+#     fig_copy = fig.get_figure()
+#     fig_copy.savefig(fig_path, dpi=500)
+#     plt.clf()
+#     print(f"Type Ytest: {type(y_test)}")
+#     print(f"Type Yhat: {type(y_hat)}")
+#     print(r2_score(y_test, y_hat))
+#     errors = y_test - y_hat
+#     median_error = round(sum(errors) / len(errors), 5)
+#     plt.hist(errors, bins=150)
+#     fig_path = os.path.join(folder_for_current_run_statistics, "02.ErrorsHist.jpg")
+#     # fig_copy = fig.get_figure()
+#     plt.savefig(fig_path, dpi=500)
+#     median_percent_error = round((median_error * 100 / median_test_value), 3)
+#     text_data_filepath = os.path.join(folder_for_current_run_statistics, "Stats.txt")
+#     stat_string = f"Median NKTD value: {median_test_value}, \n meadian prediction error: {median_error} or {median_percent_error}%"
+#     with open(text_data_filepath, "w") as file:
+#         file.write(stat_string)
 
 
 def save_model(model, model_name):
@@ -226,6 +238,7 @@ def save_model(model, model_name):
         pickle.dump(model, file)
 
     print(models_folder)
+
 
 def ensure_folder_existance(folder_path):
     try:

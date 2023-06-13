@@ -69,7 +69,7 @@ def process_file(file_path, transformer, model):
     initial_data_for_prediction = initial_data_for_prediction[~mask]
 
     depth_index, initial_data_for_prediction, data_for_prediction = add_features(initial_data_for_prediction, depth_index, initial_data_for_prediction, add_log=True, add_exp=True, add_sqrt=True)
-    print(data_for_prediction)
+    # print(data_for_prediction)
     X_transformed = transformer.transform(data_for_prediction)
     NKTD_curve = model.predict(X_transformed)
     NKTD_curve = pd.DataFrame(NKTD_curve)
@@ -97,14 +97,10 @@ def add_features(X, depth_index, initial_data_for_prediction, add_log=True, add_
         log_X_data = np.log(X[start_columns])
         log_X_data.columns = [column_name + "_log" for column_name in X[start_columns]]
         X = pd.concat([X, log_X_data], axis=1)
-        # drop_mask = X = np.NINF
         mask = X.isin([np.Inf, np.NINF]).any(axis=1)
         X = X[~mask]
         depth_index = depth_index[~mask]
         initial_data_for_prediction = initial_data_for_prediction[~mask]
-        # X = X[X != np.NINF]
-        # X = X[X != np.Inf]
-        # X.dropna(inplace=True, how='any')
     if add_exp:
         exp_X_data = np.exp(X[start_columns])
         exp_X_data.columns = [column_name + "_exp" for column_name in X[start_columns]]
@@ -113,10 +109,6 @@ def add_features(X, depth_index, initial_data_for_prediction, add_log=True, add_
         X = X[~mask]
         depth_index = depth_index[~mask]
         initial_data_for_prediction = initial_data_for_prediction[~mask]
-        # print(X.max())
-        # X = X[X != np.NINF]
-        # X = X[X != np.Inf]
-        # X.dropna(inplace=True, how='any')
 
     if add_sqrt:
         sqrt_X_data = np.sqrt(X[start_columns])
@@ -127,9 +119,6 @@ def add_features(X, depth_index, initial_data_for_prediction, add_log=True, add_
         X = X[~mask]
         depth_index = depth_index[~mask]
         initial_data_for_prediction = initial_data_for_prediction[~mask]
-        # X = X[X != np.NINF]
-        # X = X[X != np.Inf]
-        # X.dropna(inplace=True, how='any')
 
     mask = X.isna().any(axis=1)
     X = X[~mask]
