@@ -6,25 +6,7 @@ import numpy as np
 import lasio
 
 
-def main(folder_with_files_path, transformer, model):
-    """Starts program execution"""
-    # transformer_path = r"/Users/gymoroz/01.MyFiles/02.Coding/01.CodeForO&G/05.NKTDPrediction/ProjectCode/Models/run_2023_06_12-10_02_59/Transformer.pkl"
-    # model_path = r"/Users/gymoroz/01.MyFiles/02.Coding/01.CodeForO&G/05.NKTDPrediction/ProjectCode/Models/run_2023_06_12-10_02_59/XGBRegressionModel.pkl"
-    # folder_with_files_path = r"/Users/gymoroz/Desktop/Test1/ToPredict"
-    # transformer = load_model(transformer_path)
-    # model = load_model(model_path)
-    process_las_files(folder_with_files_path, transformer, model)
-    print("Successfully completed")
-
-
-def load_model(model_path):
-    """The function loads the model located at model_path"""
-    with open(model_path, "rb") as file:
-        model = pickle.load(file)
-    return model
-
-
-def process_las_files(folder_with_files, transformer, model):
+def process_las_files(folder_with_files, transformer, model, columns_for_prediction, target_column_name):
     """Function processes .las files located in folder_with_files
        uses pretrained transformer and model, for making result files"""
     paths_list = make_paths_list(folder_with_files)
@@ -32,8 +14,15 @@ def process_las_files(folder_with_files, transformer, model):
     manage_folder_existence(result_folder_path)
     for file_path in paths_list:
         print(f"Processing file {os.path.basename(file_path)}")
-        las = process_file(file_path, transformer, model)
+        las = process_file(file_path, transformer, model, columns_for_prediction, target_column_name)
         las.write(os.path.join(result_folder_path, os.path.basename(file_path)))
+
+
+def load_model(model_path):
+    """The function loads the model located at model_path"""
+    with open(model_path, "rb") as file:
+        model = pickle.load(file)
+    return model
 
 
 def make_paths_list(folder_with_files):
@@ -54,39 +43,44 @@ def manage_folder_existence(folder_path):
         pass
 
 
-def process_file(file_path, transformer, model):
+def process_file(file_path, transformer, model, columns_for_prediction, target_column_name):
     """Based on .las file located in file_path, creates result .las file, containing predicted curve data"""
     las = lasio.read(file_path)
-    depth_data = pd.Series(las.curves["DEPT"].data)
-    gk_curve = pd.Series(las.curves["GK"].data)
-    bk_curve = pd.Series(las.curves["BK"].data)
-
-    initial_data_for_prediction = pd.concat([gk_curve, bk_curve], axis=1)
-    initial_data_for_prediction.columns = ["GK", "BK"]
-    mask = initial_data_for_prediction.isna().any(axis=1)
-
-    depth_index = depth_data[~mask]
-    initial_data_for_prediction = initial_data_for_prediction[~mask]
-
-    depth_index, initial_data_for_prediction, data_for_prediction = add_features(initial_data_for_prediction, depth_index, initial_data_for_prediction, add_log=True, add_exp=True, add_sqrt=True)
-    # print(data_for_prediction)
+    all_las_data = las.df()
+    curves_for_prediction = all_las_data[columns_for_prediction]
+    depth_data = curves_for_prediction.index
+    prediction_curves_exist_mask = curves_for_prediction.isna().any(axis=1)
+    depth_index = depth_data[~prediction_curves_exist_mask]
+    data_for_prediction = curves_for_prediction[~prediction_curves_exist_mask]
+    all_las_data = all_las_data[~prediction_curves_exist_mask]
+    depth_index, data_for_prediction, data_for_prediction = add_features(data_for_prediction,
+                                                                         depth_index,
+                                                                         all_las_data,
+                                                                         add_log=True, add_exp=True,
+                                                                         add_sqrt=True)
     X_transformed = transformer.transform(data_for_prediction)
-    NKTD_curve = model.predict(X_transformed)
-    NKTD_curve = pd.DataFrame(NKTD_curve)
-    NKTD_curve.columns = ["NKTD_predicted"]
-    initial_data_for_prediction.index = depth_index
-    NKTD_curve.index = depth_index
-    resulting_data = pd.concat([initial_data_for_prediction, NKTD_curve], axis=1)
+    predicted_curve = model.predict(X_transformed)
+    predicted_curve = pd.DataFrame(predicted_curve)
+    predicted_curve.columns = [f"{target_column_name}_predicted"]
+    # data_for_prediction.index = depth_index
+    predicted_curve.index = depth_index
+    resulting_data = pd.concat([all_las_data, predicted_curve], axis=1)
     resulting_data.index.name = "DEPTH"
+    print(resulting_data)
     las.set_data_from_df(resulting_data)
     return las
 
 
-def filter_data_for_prediction(well):
-    gr_curve = well.data["GK"].df
-    bk_curve = well.data["BK"].df
-    data_for_prediction = pd.concat([gr_curve, bk_curve], axis=1)
-    mask = data_for_prediction[~(data_for_prediction == -999.25).any(axis=1)]
+def get_las_data(las_file_path, columns_for_prediction):
+    las = lasio.read(las_file_path)
+    print(las.df().columns)
+    try:
+        las_data = las.df()[columns_for_prediction]
+        las_data.dropna(inplace=True)
+        print(las_data)
+        return las_data
+    except KeyError as e:
+        print(f"Error {e} with file {os.path.basename(las_file_path)}")
 
 
 def add_features(X, depth_index, initial_data_for_prediction, add_log=True, add_exp=True, add_sqrt=True):
@@ -128,7 +122,9 @@ def add_features(X, depth_index, initial_data_for_prediction, add_log=True, add_
 
 
 if __name__ == "__main__":
-    folder_with_files_path = None
+    folder_with_files = None
     transformer = None
     model = None
-    main(folder_with_files_path, transformer, model)
+    columns_for_prediction = []
+    target_column_name = []
+    process_las_files(folder_with_files, transformer, model, columns_for_prediction, target_column_name)

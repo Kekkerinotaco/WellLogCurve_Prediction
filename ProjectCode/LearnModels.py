@@ -17,35 +17,36 @@ from xgboost import XGBRegressor
 from ProjectCode import ShowStatistics
 
 date_time_str = time.strftime("run_%Y_%m_%d-%H_%M_%S")
+
+
 def main(folder_with_files, needed_columns, target_column):
-    # folder_with_files = r""
-    # needed_columns = ["GK", "BK", "NKTD"]
-    # csv_path = os.path.join(folder_with_files, "!_LearningData.csv")
     start = time.time()
-    # learning_data = pd.read_csv(csv_path, index_col=0)
-    learning_data = get_learning_data_from_lases(folder_with_files, needed_columns)
-    # print(learning_data)
+    learning_data = get_learning_data_from_lases(folder_with_files, needed_columns, target_column)
 
-    # Возможно весь этот блок бесполезен, или нужен только при загрузке датасета из .csv, но и там похоже решается
-    # указанием колонки-индекса
-    try:
-        learning_data.index = learning_data["DEPT"]
-        learning_data.drop(columns="DEPT", inplace=True)
-    except KeyError:
-        try:
-            learning_data.index = learning_data["DEPTH"]
-            learning_data.drop(columns="DEPTH", inplace=True)
-        except:
-            pass
+    learning_data = preprocess_data(learning_data, needed_columns)
+    print(f"Data loading time: {time.time() - start}")
 
-    learning_data = preprocess_data(learning_data)
     learning_data = learning_data.head(1000)
     X_train, X_test, y_train, y_test, full_pipeline = transform_data(learning_data, target_column=target_column,
                                                                      add_log=True, add_exp=True, add_sqrt=True)
-
-    print(f"Data loading time: {time.time() - start}")
     prediction_model = train_xgb_model(X_train, X_test, y_train, y_test)
     return full_pipeline, prediction_model
+
+
+def get_learning_data_from_lases(folder_path, needed_curves, target_column):
+    summary_data = None
+    needed_curves.append(target_column)
+    for root, folders, files in os.walk(folder_path):
+        for file in files:
+            if file.upper().endswith(".LAS"):
+                print(file)
+                las_file_path = os.path.join(root, file)
+                if summary_data is None:
+                    summary_data = get_las_data(las_file_path, needed_curves)
+                else:
+                    current_file_data = get_las_data(las_file_path, needed_curves)
+                    summary_data = pd.concat([summary_data, current_file_data], axis=0)
+    return summary_data
 
 
 def transform_data(learning_data, target_column, add_log=True, add_exp=True, add_sqrt=True):
@@ -77,23 +78,9 @@ def transform_data(learning_data, target_column, add_log=True, add_exp=True, add
     return X_train, X_test, y_train, y_test, full_pipeline
 
 
-def get_learning_data_from_lases(folder_path, needed_curves):
-    summary_data = None
-    for root, folders, files in os.walk(folder_path):
-        for file in files:
-            if file.upper().endswith(".LAS"):
-                print(file)
-                las_file_path = os.path.join(root, file)
-                if summary_data is None:
-                    summary_data = get_las_data(las_file_path, needed_curves)
-                else:
-                    current_file_data = get_las_data(las_file_path, needed_curves)
-                    summary_data = pd.concat([summary_data, current_file_data], axis=0)
-    return summary_data
-
-
 def get_las_data(las_file_path, needed_curves):
     las = lasio.read(las_file_path)
+    print(las.df().columns)
     try:
         las_data = las.df()[needed_curves]
         las_data.dropna(inplace=True)
@@ -103,14 +90,10 @@ def get_las_data(las_file_path, needed_curves):
         print(f"Error {e} with file {os.path.basename(las_file_path)}")
 
 
-def preprocess_data(learning_data):
-    learning_columns = ["GK", "BK"]
-    # print(learning_data)
+def preprocess_data(learning_data, learning_columns):
     data_dropped_outliers = drop_outliers(learning_data, learning_columns, 3)
     data_dropped_correlations = drop_corr(data_dropped_outliers, corr_coef=0.8)
-    # print(data_dropped_outliers)
-    # print(data_dropped_outliers.shape)
-    return data_dropped_outliers
+    return data_dropped_correlations
 
 
 def drop_outliers(df, columns_to_clear, n_of_std_away):
@@ -124,7 +107,8 @@ def drop_outliers(df, columns_to_clear, n_of_std_away):
     result_shape = df.shape
     result_string = "Initial df shape: {}, \n Result df shape: {}, \n N of dropped examples: {}".format(start_shape,
                                                                                                         result_shape,
-                                                                                                        start_shape[0] - result_shape[0])
+                                                                                                        start_shape[0] -
+                                                                                                        result_shape[0])
     print(result_string)
     return df
 
@@ -133,14 +117,12 @@ def drop_corr(df, corr_coef):
     corr_matrix = df.corr().abs()
     upper_tri = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(np.bool))
     to_drop = [column for column in upper_tri.columns if any(upper_tri[column] > corr_coef)]
-    df = df.drop(columns = to_drop)
+    df = df.drop(columns=to_drop)
     return df
 
 
 def add_features(X, y, add_log=True, add_exp=True, add_sqrt=True):
     start_columns = X.columns
-    exp = np.exp(X)
-    # X.isin([np.Inf, np.NINF]).any(axis=1)
     if add_log:
         log_X_data = np.log(X[start_columns])
         log_X_data.columns = [column_name + "_log" for column_name in X[start_columns]]
@@ -191,39 +173,8 @@ def train_xgb_model(X_train, X_test, y_train, y_test):
     xgb_reg = xgb_grid_search.best_estimator_
     y_hat = xgb_reg.predict(X_test)
     ShowStatistics.main(y_test, y_hat, date_time_str)
-    # np.savetxt("./Yhat.csv", y_hat)
-    # y_hat.to_csv()
-    # y_test.iloc[:, 1].to_csv("./Ytest.csv")
     save_model(xgb_reg, "XGBRegressionModel.pkl")
     return xgb_reg
-
-
-# def show_statistics(y_test, y_hat):
-#     global date_time_str
-#     folder_for_statistics = os.path.join(os.path.curdir, "01.PredictionQualityCheck")
-#     ensure_folder_existance(folder_for_statistics)
-#     folder_for_current_run_statistics = os.path.join(folder_for_statistics, date_time_str)
-#     ensure_folder_existance(folder_for_current_run_statistics)
-#     median_test_value = y_test.median()
-#     fig = plt.scatter(y_test, y_hat)
-#     fig_path = os.path.join(folder_for_current_run_statistics, "01.Pred_VS_True.jpg")
-#     fig_copy = fig.get_figure()
-#     fig_copy.savefig(fig_path, dpi=500)
-#     plt.clf()
-#     print(f"Type Ytest: {type(y_test)}")
-#     print(f"Type Yhat: {type(y_hat)}")
-#     print(r2_score(y_test, y_hat))
-#     errors = y_test - y_hat
-#     median_error = round(sum(errors) / len(errors), 5)
-#     plt.hist(errors, bins=150)
-#     fig_path = os.path.join(folder_for_current_run_statistics, "02.ErrorsHist.jpg")
-#     # fig_copy = fig.get_figure()
-#     plt.savefig(fig_path, dpi=500)
-#     median_percent_error = round((median_error * 100 / median_test_value), 3)
-#     text_data_filepath = os.path.join(folder_for_current_run_statistics, "Stats.txt")
-#     stat_string = f"Median NKTD value: {median_test_value}, \n meadian prediction error: {median_error} or {median_percent_error}%"
-#     with open(text_data_filepath, "w") as file:
-#         file.write(stat_string)
 
 
 def save_model(model, model_name):
@@ -231,8 +182,8 @@ def save_model(model, model_name):
     curr_folder_path = os.path.abspath(os.path.curdir)
     models_folder = os.path.join(curr_folder_path, "Models")
     current_run_folder = os.path.join(models_folder, date_time_str)
-    ensure_folder_existance(models_folder)
-    ensure_folder_existance(current_run_folder)
+    ensure_folder_existence(models_folder)
+    ensure_folder_existence(current_run_folder)
     saved_model_path = os.path.join(current_run_folder, model_name)
     with open(saved_model_path, "wb") as file:
         pickle.dump(model, file)
@@ -240,7 +191,7 @@ def save_model(model, model_name):
     print(models_folder)
 
 
-def ensure_folder_existance(folder_path):
+def ensure_folder_existence(folder_path):
     try:
         os.mkdir(folder_path)
     except FileExistsError:
@@ -249,4 +200,3 @@ def ensure_folder_existance(folder_path):
 
 if __name__ == '__main__':
     main()
-

@@ -1,6 +1,7 @@
 import customtkinter
 from tkinter import messagebox
 
+
 class Interface(customtkinter.CTk):
     def __init__(self):
         super().__init__()
