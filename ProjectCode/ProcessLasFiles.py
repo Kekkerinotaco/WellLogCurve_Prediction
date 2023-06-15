@@ -66,7 +66,6 @@ def process_file(file_path, transformer, model, columns_for_prediction, target_c
     predicted_curve.index = depth_index
     resulting_data = pd.concat([all_las_data, predicted_curve], axis=1)
     resulting_data.index.name = "DEPTH"
-    print(resulting_data)
     las.set_data_from_df(resulting_data)
     return las
 

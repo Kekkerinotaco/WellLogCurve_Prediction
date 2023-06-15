@@ -13,23 +13,27 @@ from sklearn.compose import ColumnTransformer
 import pickle
 from sklearn.model_selection import RandomizedSearchCV
 from xgboost import XGBRegressor
-
+from sklearn.metrics import r2_score
 from ProjectCode import ShowStatistics
+from sklearn.linear_model import LinearRegression
+import PlotInitialDataStatistics
 
 date_time_str = time.strftime("run_%Y_%m_%d-%H_%M_%S")
 
 
-def main(folder_with_files, needed_columns, target_column):
+def main(folder_with_files, learning_columns, target_column):
+    global date_time_str
     start = time.time()
-    learning_data = get_learning_data_from_lases(folder_with_files, needed_columns, target_column)
-
-    learning_data = preprocess_data(learning_data, needed_columns)
+    learning_data = get_learning_data_from_lases(folder_with_files, learning_columns, target_column)
+    learning_data = preprocess_data(learning_data, learning_columns)
+    PlotInitialDataStatistics.main(learning_data, date_time_str, learning_columns, target_column)
     print(f"Data loading time: {time.time() - start}")
-
-    learning_data = learning_data.head(1000)
+    # learning_data = learning_data.head(1000)
+    print(f"The shape of the learning Data: {learning_data.shape}")
     X_train, X_test, y_train, y_test, full_pipeline = transform_data(learning_data, target_column=target_column,
                                                                      add_log=True, add_exp=True, add_sqrt=True)
-    prediction_model = train_xgb_model(X_train, X_test, y_train, y_test)
+    # prediction_model = train_xgb_model(X_train, X_test, y_train, y_test)
+    prediction_model = train_LinReg_model(X_train, X_test, y_train, y_test)
     return full_pipeline, prediction_model
 
 
@@ -39,7 +43,7 @@ def get_learning_data_from_lases(folder_path, needed_curves, target_column):
     for root, folders, files in os.walk(folder_path):
         for file in files:
             if file.upper().endswith(".LAS"):
-                print(file)
+                print(f"Getting the data from file: {file}")
                 las_file_path = os.path.join(root, file)
                 if summary_data is None:
                     summary_data = get_las_data(las_file_path, needed_curves)
@@ -74,17 +78,16 @@ def transform_data(learning_data, target_column, add_log=True, add_exp=True, add
     X_train = full_pipeline.fit_transform(X_train)
     X_test = full_pipeline.transform(X_test)
     save_model(full_pipeline, "Transformer.pkl")
-
     return X_train, X_test, y_train, y_test, full_pipeline
 
 
 def get_las_data(las_file_path, needed_curves):
     las = lasio.read(las_file_path)
-    print(las.df().columns)
+    # print(las.df().columns)
     try:
         las_data = las.df()[needed_curves]
         las_data.dropna(inplace=True)
-        print(las_data)
+        # print(las_data)
         return las_data
     except KeyError as e:
         print(f"Error {e} with file {os.path.basename(las_file_path)}")
@@ -102,7 +105,7 @@ def drop_outliers(df, columns_to_clear, n_of_std_away):
         column_mean = df[column].mean()
         column_STD = df[column].std()
         df["n_std_away"] = np.abs((df[column] - column_mean) / column_STD)
-        df = df[df["n_std_away"] < float(n_of_std_away)]
+        df.loc[:, "n_std_away"] = np.abs((df[column] - column_mean) / column_STD)
     df = df.drop(columns="n_std_away")
     result_shape = df.shape
     result_string = "Initial df shape: {}, \n Result df shape: {}, \n N of dropped examples: {}".format(start_shape,
@@ -167,20 +170,32 @@ def train_xgb_model(X_train, X_test, y_train, y_test):
         linear_booster_params,
     ]
 
-    xgb_grid_search = RandomizedSearchCV(XGBRegressor(), xgb_grid_params, cv=5, scoring="r2", n_iter=8, n_jobs=-1)
+    xgb_rand_search = RandomizedSearchCV(XGBRegressor(), xgb_grid_params, cv=5, scoring="r2", n_iter=8, n_jobs=-1)
     print("Started to train XGBRegressor")
-    xgb_grid_search.fit(X_train, y_train)
-    xgb_reg = xgb_grid_search.best_estimator_
+    xgb_rand_search.fit(X_train, y_train)
+    xgb_reg = xgb_rand_search.best_estimator_
     y_hat = xgb_reg.predict(X_test)
     ShowStatistics.main(y_test, y_hat, date_time_str)
     save_model(xgb_reg, "XGBRegressionModel.pkl")
+    print(r2_score(y_hat, y_test))
     return xgb_reg
+
+
+def train_LinReg_model(X_train, X_test, y_train, y_test):
+    lin_reg_model = LinearRegression(n_jobs=-1, positive=True)
+    lin_reg_model.fit(X_train, y_train)
+    save_model(lin_reg_model, "linearRegressionModel.pkl")
+    y_hat = lin_reg_model.predict(X_test)
+    print(f"Linear model R2 score: {r2_score(y_hat, y_test)}")
+    ShowStatistics.main(y_test, y_hat, date_time_str)
+
+    return lin_reg_model
 
 
 def save_model(model, model_name):
     global date_time_str
     curr_folder_path = os.path.abspath(os.path.curdir)
-    models_folder = os.path.join(curr_folder_path, "Models")
+    models_folder = os.path.join(curr_folder_path, "02.Models")
     current_run_folder = os.path.join(models_folder, date_time_str)
     ensure_folder_existence(models_folder)
     ensure_folder_existence(current_run_folder)
