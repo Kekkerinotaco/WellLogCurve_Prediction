@@ -14,26 +14,28 @@ import pickle
 from sklearn.model_selection import RandomizedSearchCV
 from xgboost import XGBRegressor
 from sklearn.metrics import r2_score
-from ProjectCode import ShowStatistics
+from ProjectCode import MakePredictionQualityStats
 from sklearn.linear_model import LinearRegression
 import PlotInitialDataStatistics
-
+import ProcessTestFiles
+import matplotlib.pyplot as plt
 date_time_str = time.strftime("run_%Y_%m_%d-%H_%M_%S")
 
 
-def main(folder_with_files, learning_columns, target_column):
+def main(folder_with_learn_files, folder_with_test_files, learning_columns, target_column):
     global date_time_str
     start = time.time()
-    learning_data = get_learning_data_from_lases(folder_with_files, learning_columns, target_column)
+    learning_data = get_learning_data_from_lases(folder_with_learn_files, learning_columns, target_column)
     learning_data = preprocess_data(learning_data, learning_columns)
     PlotInitialDataStatistics.main(learning_data, date_time_str, learning_columns, target_column)
     print(f"Data loading time: {time.time() - start}")
-    # learning_data = learning_data.head(1000)
     print(f"The shape of the learning Data: {learning_data.shape}")
     X_train, X_test, y_train, y_test, full_pipeline = transform_data(learning_data, target_column=target_column,
                                                                      add_log=True, add_exp=True, add_sqrt=True)
     # prediction_model = train_xgb_model(X_train, X_test, y_train, y_test)
     prediction_model = train_LinReg_model(X_train, X_test, y_train, y_test)
+    ProcessTestFiles.main(full_pipeline, prediction_model, folder_with_test_files, learning_columns, target_column)
+    plot_data_amount_tendency(prediction_model, X_train, y_train, X_test, y_test)
     return full_pipeline, prediction_model
 
 
@@ -105,7 +107,8 @@ def drop_outliers(df, columns_to_clear, n_of_std_away):
         column_mean = df[column].mean()
         column_STD = df[column].std()
         df["n_std_away"] = np.abs((df[column] - column_mean) / column_STD)
-        df.loc[:, "n_std_away"] = np.abs((df[column] - column_mean) / column_STD)
+        df = df[df["n_std_away"] < float(n_of_std_away)]
+        # df.loc[:, "n_std_away"] = np.abs((df[column] - column_mean) / column_STD)
     df = df.drop(columns="n_std_away")
     result_shape = df.shape
     result_string = "Initial df shape: {}, \n Result df shape: {}, \n N of dropped examples: {}".format(start_shape,
@@ -175,20 +178,19 @@ def train_xgb_model(X_train, X_test, y_train, y_test):
     xgb_rand_search.fit(X_train, y_train)
     xgb_reg = xgb_rand_search.best_estimator_
     y_hat = xgb_reg.predict(X_test)
-    ShowStatistics.main(y_test, y_hat, date_time_str)
+    MakePredictionQualityStats.main(y_test, y_hat, date_time_str)
     save_model(xgb_reg, "XGBRegressionModel.pkl")
     print(r2_score(y_hat, y_test))
     return xgb_reg
 
 
 def train_LinReg_model(X_train, X_test, y_train, y_test):
-    lin_reg_model = LinearRegression(n_jobs=-1, positive=True)
+    lin_reg_model = LinearRegression(n_jobs=-1, positive=True, fit_intercept=True)
     lin_reg_model.fit(X_train, y_train)
     save_model(lin_reg_model, "linearRegressionModel.pkl")
     y_hat = lin_reg_model.predict(X_test)
     print(f"Linear model R2 score: {r2_score(y_hat, y_test)}")
-    ShowStatistics.main(y_test, y_hat, date_time_str)
-
+    MakePredictionQualityStats.main(y_test, y_hat, date_time_str)
     return lin_reg_model
 
 
@@ -204,6 +206,50 @@ def save_model(model, model_name):
         pickle.dump(model, file)
 
     print(models_folder)
+
+
+def plot_data_amount_tendency(model, X_train, y_train, X_test, y_test):
+    global date_time_str
+    print("Plotting DataAmountTendency")
+    statistic_folder = os.path.join(os.path.curdir, "01.InitialDataStatistics")
+    ensure_folder_existence(statistic_folder)
+    current_run_statistic_folder = os.path.join(statistic_folder, date_time_str)
+    ensure_folder_existence(current_run_statistic_folder)
+    result_file_path = os.path.join(current_run_statistic_folder, "00.DataAmountTendency.png")
+    data_length = len(X_train)
+    # step = int(data_length / 20)
+    step = 20000
+    start_point = data_length - step * (data_length // step)
+    data_length_list = []
+    train_R2_list = []
+    test_R2_list = []
+    print(type(X_train))
+    print(type(y_train))
+    for data_len in range(start_point, data_length + 1, step):
+        try:
+            print("Current_data_lenth: {}".format(data_len))
+            # Параметры лучшего классификатора из grid_search
+            current_model = model
+            learning_chunk = X_train[:data_len]
+            target_chunk = y_train.head(data_len)
+            current_model.fit(learning_chunk, target_chunk)
+            y_hat_train = current_model.predict(learning_chunk)
+            y_hat_test = current_model.predict(X_test)
+            data_length_list.append(data_len)
+            train_R2_list.append(r2_score(target_chunk, y_hat_train))
+            test_R2_list.append(r2_score(y_test, y_hat_test))
+        except ValueError:
+            continue
+
+    fig, ax = plt.subplots(figsize=(15, 15))
+    ax.plot(data_length_list, train_R2_list, label="Train_R2", marker="s", linewidth=3)
+    ax.plot(data_length_list, test_R2_list, label="Test_R2", marker="x", linewidth=3)
+
+    ax.set_xlabel("Amount_of_training_data")
+    ax.set_ylabel("R2 metric")
+    ax.legend()
+    fig_copy = fig.get_figure()
+    fig_copy.savefig(result_file_path)
 
 
 def ensure_folder_existence(folder_path):

@@ -6,7 +6,7 @@ import pandas as pd
 
 def main(y_test, y_hat, date_time_str):
 
-    statistic_folder = os.path.join(os.path.curdir, "01.PredictionQualityCheck")
+    statistic_folder = os.path.join(os.path.curdir, "03.PredictionQualityCheck")
     ensure_folder_existance(statistic_folder)
     current_run_statistic_folder = os.path.join(statistic_folder, date_time_str)
     ensure_folder_existance(current_run_statistic_folder)

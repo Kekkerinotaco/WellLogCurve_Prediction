@@ -2,6 +2,8 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
+import numpy as np
+from sklearn.metrics import r2_score
 
 
 def main(data, date_time_string, learning_curves, target_curve):
@@ -13,7 +15,7 @@ def main(data, date_time_string, learning_curves, target_curve):
 
     # If the df is too large, it will take a while to make plots,
     # so we need to sample only a part of it
-    sample_number = 5000
+    sample_number = 20000
     if len(data) > sample_number:
         data = data.sample(sample_number)
     save_txt_stats(data, current_run_statistic_folder)
@@ -23,14 +25,39 @@ def main(data, date_time_string, learning_curves, target_curve):
 
 def plot_df_histograms(data, folder_for_statistics):
     columns_counter = 0
+    cleared_data = drop_outliers(data, data.columns, 3)
+    print(cleared_data)
     for column in data.columns:
         print(f"Plotting the distribution histogram for curve: {column}")
         columns_counter += 1
         result_graph_name = os.path.join(folder_for_statistics, f"{columns_counter}.{column}_statistics.png")
-        # fig = sns.histplot(data=data, x=column)
+        sns.histplot(data=data, x=column)
         plt.savefig(result_graph_name)
         plt.clf()
-        plt.close()
+        columns_counter += 1
+        result_graph_name = os.path.join(folder_for_statistics, f"{columns_counter}.{column}_statistics_no_corr.png")
+        sns.histplot(data=cleared_data, x=column)
+        plt.savefig(result_graph_name)
+        plt.clf()
+
+
+def drop_outliers(df, columns_to_clear, n_of_std_away):
+    df = df.copy()
+    start_shape = df.shape
+    for column in columns_to_clear:
+        column_mean = df[column].mean()
+        column_STD = df[column].std()
+        df["n_std_away"] = np.abs((df[column] - column_mean) / column_STD)
+        # df.loc[:, "n_std_away"] = np.abs((df[column] - column_mean) / column_STD)
+        df = df[df["n_std_away"] < float(n_of_std_away)]
+    df = df.drop(columns="n_std_away")
+    result_shape = df.shape
+    result_string = "Initial df shape: {}, \n Result df shape: {}, \n N of dropped examples: {}".format(start_shape,
+                                                                                                        result_shape,
+                                                                                                        start_shape[0] -
+                                                                                                        result_shape[0])
+    print(result_string)
+    return df
 
 
 def ensure_folder_existence(folder_path):
